@@ -1,0 +1,479 @@
+---
+title: State-Level Inflation Expectations Analysis Using Google Trends
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: false
+    df_print: paged
+    self_contained: true
+params:
+  exc_sols: false
+---
+### 4/27/26 
+### Sofia Pelle
+
+```{r}
+library(readxl)
+library(fixest)
+library(knitr)
+library(ggplot2)
+library(ggthemes)
+library(tidyverse)
+``` 
+
+```{r}
+theme_set(theme_economist())
+```
+
+
+# **Project Overview**
+#### Expected inflation is the rate at which consumers anticipate prices to rise in the future. A core principle of macroeconomics suggests that when consumers believe prices will be higher in the future, their instinct is to make larger investments and quicker decisions in the current thriving economy. In the short run, this will raise prices even more.
+
+#### Consumer expectations are often shaped by external sources, for example, news stories, social media, and the internet. When individuals become concerned about rising prices, they may turn to the internet to look up information about rising costs, and inflation. Google Trends data captures this behavior, and has the ability to be analyzed at the state level. 
+
+#### This analysis combines Google Trends data with data from the New York Federal Reserve's Survey of Consumer Expectations (SCE) to examine whether differences in Google search behavior across states can help explain variation in expected inflation.
+
+
+
+
+
+# **Research Question**
+### *To what extent can differences in Google search interest for cost of living related terms, such as gas prices, rent, and unemployment, predict variation in expected inflation across the United States ? *
+
+## **Analysis**
+### Raw Data Description
+
+
+
+#### The data used in this analysis come from two sources: the New York Federal Reserve’s Survey of Consumer Expectations (SCE) and Google Trends.
+
+#### The SCE dataset is a monthly survey conducted by the New York Federal Reserve, which collects information on individuals’ expectations about future economic conditions, including inflation. Respondents report their expectations for future inflation, which are used to construct a measure of expected inflation (Q9_mean). The dataset includes individual responses, survey weights, and geographic identifiers such as state.
+
+#### The Google Trends data were collected directly from Google Trends and measure relative search interest for specific terms across U.S. states. These values are normalized on a scale from 0 to 100, where higher values indicate greater search interest relative to other states during the same time period. The data reflect aggregated search behavior rather than raw search counts.
+
+#### Both datasets were restricted to the entire year of 2024 and aggregated to the state level to create a cross-sectional dataset. The final joined dataset includes expected inflation (from the SCE) and search interest variables for gas prices, rent, and unemployment for each state.
+
+
+## **Data cleaning**  
+
+# *Dataset #1: Survey of Consumer Expectations: Short Term Inflation Expectations*
+### This dataset is from the [Federal Reserve Bank of New York's Center for Microeconomic data](https://www.newyorkfed.org/microeconomics/sce#/) 
+```{r}
+ny_fed_data <- read_excel('/Users/sofiapelle/Desktop/microdata.xlsx', skip = 1) %>%
+  rename(state = `_STATE`) %>%
+  select(date, state, Q9_mean, weight) %>% # want to see respondent's exp inf
+  filter(date >= 202401 & date <= 202412) %>%
+  drop_na(state, Q9_mean) %>% 
+  filter(Q9_mean > -10, Q9_mean < 20)  %>% # filtering for major outliers that do not reflect real inflation rates
+  rename_with(~str_to_lower(.) %>% str_replace_all(" ", "_"))
+
+```
+
+
+
+```{r}
+ny_fed_data <- ny_fed_data %>%
+  drop_na(weight) %>%
+  group_by(state) %>%
+  summarise(    
+    expected_inflation = weighted.mean(q9_mean, w = weight, na.rm = TRUE), # use the weighted mean since data is a survey, and each response has a corresponding importance, and are not all treated equally
+    n_responses = n(),
+    .groups = "drop" 
+  ) %>%
+mutate(state = case_when(     # will match state names with their abbreviations                  
+    state == "DC"
+ ~ "District of Columbia", 
+ TRUE ~ state.name[match(state, state.abb)]
+ ))
+ny_fed_data
+```
+
+
+
+# *Dataset #2: Google Trends Dataset*
+### This dataset is from [Google Trends](https://trends.google.com/explore?geo=US), including the following search terms: gas prices, unemployment benefits, and rent. 
+```{r}
+google_data <- read_csv('/Users/sofiapelle/Desktop/geoMap (2).csv', skip = 1) %>%
+   rename(
+    unemployment = `unemployment: (2024)`,
+    gas_prices = `gas prices: (2024)`,
+    rent = `rent: (2024)`,
+    state = Region
+  )
+google_data
+```
+
+```{r}
+search_data <- google_data %>%
+  mutate(across(c(unemployment, gas_prices, rent), parse_number))
+ # parse_number extracts numbers from strings, in this case removing the % sign
+search_data
+```
+# **Data Processing**
+
+### Now, we join the two datasets. A left join is used to add Google Trends search data onto the NY Fed dataset, keeping all 51 observations from the SCE as the base.
+
+```{r}
+joined_data <- ny_fed_data %>%
+  left_join(search_data, by = "state")
+
+joined_data
+```
+## *Processed data description*
+
+```{r}
+sum(is.na(joined_data$unemployment))
+sum(is.na(joined_data$expected_inflation))
+```
+
+```{r}
+nrow(joined_data)
+```
+
+### The 'setdiff()' function checks that all 50 states and D.C. matched perfectly between the two datasets, confirming that no states were dropped or unmatched when joined
+
+```{r}
+setdiff(ny_fed_data$state, search_data$state)
+setdiff(search_data$state, ny_fed_data$state)
+```
+
+```{r}
+summary_table <- summary(joined_data %>%
+  select(expected_inflation, unemployment, gas_prices, rent))
+
+kable(summary_table, digits = 2, caption = "Summary Statistics")
+
+summary_table
+```
+
+### Summary Plots
+
+
+
+
+#### SCE Data Histogram
+```{r}
+ggplot(joined_data, aes(x = expected_inflation)) +
+  geom_histogram(bins = 20, fill = "cadetblue4", color = "white") +
+  geom_vline(
+    xintercept = mean(joined_data$expected_inflation, na.rm = TRUE),
+    color = "black",
+    linetype = "dashed",
+    size = 1
+  ) +
+  labs(
+    title = "Distribution of Expected Inflation (2024)",
+    x = "Expected Inflation (%)",
+    y = "Frequency"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+#### Google Trend Data Histogram 
+#### The X axis is showing the range of Google Trends index values across states for each term. 
+### The Y axis shows how many states have that level of search interest
+```{r}
+joined_data %>%
+  select(unemployment, gas_prices, rent) %>%
+  pivot_longer(everything(), names_to = "term", values_to = "search_interest") %>%
+  ggplot(aes(x = search_interest)) +
+  geom_histogram(bins = 15, fill = "cadetblue4", color = "white") +
+  facet_wrap(~term, scales = "free", ncol = 3) + # facet_wrap splits the histogram by variable, in this case, search term
+  labs(
+    title = "Distribution of Google Search Terms (2024)",
+    x = "Search Interest (0 - 100 Scale)",
+    y = "Frequency"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+#### The gas prices panel shows us that most states cluster between 2-4, having very low search interest and minimal variation
+#### The rent panel shows us that states spread across 69 - 58, and have a much higher search interest overall
+#### The unemployment panel spreads across 10 - 27, and has moderate search interest, and is the most spread out of the three search terms
+
+### Analysis Plots
+```{r}
+ggplot(joined_data, aes(x = unemployment, y = expected_inflation)) +
+  geom_point(alpha = 0.7, color = "darkslategray") +
+  labs(
+    title = "Expected Inflation vs. Unemployment (2024)",
+    x = "Unemployment (Google Trends, 0–100 scale)",
+    y = "Expected Inflation (%)"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 12)),
+    axis.title.y = element_text(margin = margin(r = 12))
+  ) +
+  geom_text(
+    data = subset(joined_data, expected_inflation < -3),
+    aes(label = state),
+    hjust = -0.2,
+    size = 3
+  )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Wyoming is removed from the dataset at this point. With only one SCE respondent in 2024, its weighted mean expected inflation of -6.3% is based on a single observation, and cannot be considered a reliable state level estimate. 
+```{r}
+# Wyoming had only one SCE respondent in 2024, it is dropped from all further analysis
+joined_data <- joined_data %>% filter(state != "Wyoming")
+```
+
+
+
+```{r}
+ggplot(joined_data, aes(x = gas_prices, y = expected_inflation)) +
+  geom_point(alpha = 0.7, color = "blue") +
+  labs(
+    title = "Expected Inflation vs. Gas Prices (2024)",
+    x = "Gas Prices (Google Trends, 0–100 scale)",
+    y = "Expected Inflation (%)"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 12)),
+    axis.title.y = element_text(margin = margin(r = 12))
+  ) +
+  geom_text(
+    data = subset(joined_data, expected_inflation < -3),
+    aes(label = state),
+    hjust = -0.2,
+    vjust = -1,
+    size = 3
+  )
+```
+
+```{r}
+ggplot(joined_data, aes(x = rent, y = expected_inflation)) +
+  geom_point(alpha = 0.7, color = "darkolivegreen") +
+  labs(
+    title = "Expected Inflation vs. Rent (2024)",
+    x = "Gas Prices (Google Trends, 0–100 scale)",
+    y = "Expected Inflation (%)"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 12)),
+    axis.title.y = element_text(margin = margin(r = 12))
+  ) +
+  geom_text(
+    data = subset(joined_data, expected_inflation < -3),
+    aes(label = state),
+    hjust = -0.2,
+    vjust = -1,
+    size = 3
+  )
+```
+
+## **Statistical Analysis**
+
+
+## Combined Model:
+
+
+$\text{expected inflation} = \beta_0 + \beta_1 \text{unemployment} + \beta_2 \text{gas prices} + \epsilon$
+
+#### Regression Table
+
+
+
+```{r}
+feols(expected_inflation ~ unemployment + gas_prices + rent, 
+      data = joined_data) %>%
+  etable()
+```
+#### **The variable 'rent' was removed because it is highly correlated with another variable, meaning it is not contributing anything of statistical significance to the model**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Correlation Table
+
+```{r}
+# calculate correlations between all three search terms to investigate
+# why rent was dropped due to collinearity in the regression
+joined_data %>% 
+  select(unemployment, gas_prices, rent) %>%
+  cor() %>%
+  round(2) %>%
+  kable(caption = "Correlation Matrix of Google Trends Search Terms")
+```
+#### The correlation table output provides very interesting information, that rent and unemployment have a correlation of -0.94. This indicates an almost perfect negative relationship. States that search more for unemployment tend to search less for rent, and vice versa. This extremely high correlation explains why rent was dropped due to collinearity. It does not provide independent information beyond what unemployment already finds. 
+
+```{r}
+r2_unemp <- summary(lm(unemployment ~ expected_inflation, data = joined_data))$r.squared
+r2_gas <- summary(lm(gas_prices ~ expected_inflation, data = joined_data))$r.squared
+r2_rent <- summary(lm(rent ~ expected_inflation, data = joined_data))$r.squared
+```
+
+#### Expected Inflation vs Unemployment (2024) with Regression Line
+```{r}
+r2_unemp <- summary(lm(expected_inflation ~ unemployment, data = joined_data))$r.squared
+
+ggplot(joined_data, aes(x = unemployment, y = expected_inflation)) +
+  geom_point(alpha = 0.7, color = "darkslategray") +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Expected Inflation vs. Unemployment (2024)",
+    x = "Unemployment (Google Trends, 0–100 scale)",
+    y = "Expected Inflation (%)"
+  ) +
+  annotate("text",
+           x = max(joined_data$unemployment, na.rm = TRUE),
+           y = max(joined_data$expected_inflation, na.rm = TRUE),
+           label = paste0("R² = ", round(r2_unemp, 3)),
+           hjust = 1, vjust = 1, size = 5)
+```
+
+
+
+
+
+
+
+
+
+#### Expected Inflation vs Gas Prices (2024) with Regression Line
+```{r}
+r2_gas <- summary(lm(expected_inflation ~ gas_prices, data = joined_data))$r.squared
+
+ggplot(joined_data, aes(x = gas_prices, y = expected_inflation)) +
+  geom_point(alpha = 0.7, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Expected Inflation vs. Gas Prices (2024)",
+    x = "Gas Prices (Google Trends, 0–100 scale)",
+    y = "Expected Inflation (%)"
+  ) +
+  theme( plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 12)),
+    axis.title.y = element_text(margin = margin(r = 12))
+  ) +
+  geom_text(data = subset(joined_data, expected_inflation < -3),
+    aes(label = state),
+    hjust = -0.2,
+    vjust = -1,
+    size = 3
+  ) +
+  annotate("text",
+  x = min(joined_data$gas_prices, na.rm = TRUE) * 1.05,
+  y = min(joined_data$expected_inflation, na.rm = TRUE) * 1.05,
+  label = paste0("R² = ", round(r2_gas, 3)),
+  hjust = 0,
+  vjust = 0,
+  size = 5
+  )
+```
+```{r}
+r2_rent <- summary(lm(expected_inflation ~ rent, data = joined_data))$r.squared
+
+ggplot(joined_data, aes(x = rent, y = expected_inflation)) +
+  geom_point(alpha = 0.7, color = "lightslateblue") +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Expected Inflation vs Rent (2024)",
+    x = "Rent (Google Trends, 0–100 scale)",
+    y = "Expected Inflation (%)"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 12)),
+    axis.title.y = element_text(margin = margin(r = 12))
+  ) +
+  geom_text(
+    data = subset(joined_data, expected_inflation < -3),
+    aes(label = state),
+    hjust = -0.2,
+    size = 3
+  ) +
+  annotate("text",
+    x = min(joined_data$rent) + 1,
+    y = min(joined_data$expected_inflation) + 1,
+    label = paste0("R² = ", round(r2_rent, 3)),
+    hjust = 0,
+    vjust = 0,
+    size = 5
+  )
+```
+
+## *Discussion*
+
+### **Interpretation of Results**
+### Scatterplots: 
+                             
+                             
+                        
+#### Unemployment:  
+This scatter plot appears to be very clustered around 3% inflation. The overall trend of the scatter plot is slightly positive, and Wyoming is a clear outlier. This outlier has a value of -6.3% which is extremely low and different from every other state, and it is important to note since Wyoming in the SCE data only had one respondent. This indicates that this data point is unreliable. The X axis also shows that there is not much of a search frequency for Unemployment, as the highest search interest is 27 out of 100, suggesting that unemployment is not a heavily searched term. 
+
+#### Gas Prices:  
+This scatter plot has a slightly negative trend, meaning that states with higher gas price search interest tend to have slightly lower expected inflation. This search result is unexpected and counterintuitive. The search interest for this variable was the lowest of the three, and only varies from 0 - 8, showing there is very limited variation across states.
+
+#### Rent:  
+This scatter plot also has a negative trend between rent search interest and expected inflation. The variation in rent search interest is narrow and ranges 69 - 85. However, among the three variables, Rent has the highest search interest. 
+
+#### Across all three of these search terms, the scatter plots suggest no clear relationship between search interest and expected inflation at the state wide level. The relationships appear weak and inconsistent, and the regression analysis below provides a more in depth look:
+
+
+
+### Regressions:
+
+#### Unemployment: The regression of expected inflation on Unemployment search interest has a positive coefficient of 0.045, but this is not statistically significant. The r-squared for this model is 0.02, which is extremely low and indicates that only 2% of the variation in expected inflation is explained by unemployment search behavior. This suggests that differences in unemployment related search interest across states do not meaningfully predict expected inflation.
+
+
+#### Gas Prices: The regression of expected inflation of gas price search interest has a negative coefficient of -0.137, which is also not statistically significant. The r-squared is 0.022, meaning that only 2.2% of the variation in expectation inflation is explained by gas price search behavior. Given the lack of statistical significance, this indicates that gas price searches do not have meaningful predictive power for inflation expectations. 
+
+
+#### Rent: The regression of expected inflation on rent search interest has a negative coefficient of -0.24, which is not statistically significant. The r-squared is 0.007, meaning that only 0.7% of the variation in expected inflation is explained by rent related search behavior. This extremely low result suggests that rent searches do not predict inflation expectations across states. Additionally, in the regression including all variables, the rent variable was dropped due to multicollinearity, indicating that it does not provide independent information different than the other search variables. 
+
+### Across all three of these models, search behavior does not predict expected inflation in a statistically significant way. The consistency in low R squared values suggests that the state level variation in search interest explains virtually none of the variation in expected inflation at the state level, which is accurate and confirmed by the robustness check, from when we excluded the Wyoming observation
+
+
+### **Limitations of Analysis**
+
+### The relatively small sample size (50 states and D.C.) limits the statistical power of the analysis and reduces the ability to detect meaningful relationships
+### The use of Google Trends data is different to work with, since it is normalizes and not raw data counts. This makes direct comparisons across states less precise and can distort the true search behavior.
+### The SCE data may be unreliable for certain states due to very small respondent samples which can introduce sampling bias and reduce the accuracy of estimates
+
+
+
