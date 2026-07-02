@@ -1,5 +1,5 @@
 ---
-title: State-Level Inflation Expectations Analysis Using Google Trends
+title: inflation_analysis.Rmd
 output:
   html_document:
     toc: true
